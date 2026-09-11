@@ -3,47 +3,39 @@ USE pharmaanalytics;
 CREATE OR REPLACE VIEW vw_hcp_tiering AS
 	WITH hcp_scores AS (
     SELECT
-        hcp_id,
-        specialty,
-        state,
-        territory,
-        rep_id,
-        baseline_rx_monthly,
-        rep_access_score,
-        competitor_share,
-        panel_size,
-        AVG(rx_lift_weekly) AS avg_lift,
-        (baseline_rx_monthly * 0.3
-        + rep_access_score   * 100 * 0.3
-        + competitor_share   * 100 * 0.2
-        + panel_size         * 0.01 * 0.2) AS composite_score
+        hcp_id, specialty, state, territory, rep_id,
+        baseline_rx_monthly, rep_access_score, competitor_share, panel_size,
+        AVG(rx_lift_weekly) AS avg_lift
     FROM hcp_marketing
     GROUP BY hcp_id, specialty, state, territory, rep_id,
-             baseline_rx_monthly, rep_access_score,
-             competitor_share, panel_size
+             baseline_rx_monthly, rep_access_score, competitor_share, panel_size
+),
+hcp_normalized AS (
+    SELECT *,
+        (baseline_rx_monthly - MIN(baseline_rx_monthly) OVER ()) /
+            NULLIF(MAX(baseline_rx_monthly) OVER () - MIN(baseline_rx_monthly) OVER (), 0) AS norm_baseline,
+        (rep_access_score - MIN(rep_access_score) OVER ()) /
+            NULLIF(MAX(rep_access_score) OVER () - MIN(rep_access_score) OVER (), 0) AS norm_access,
+        (competitor_share - MIN(competitor_share) OVER ()) /
+            NULLIF(MAX(competitor_share) OVER () - MIN(competitor_share) OVER (), 0) AS norm_competitor,
+        (panel_size - MIN(panel_size) OVER ()) /
+            NULLIF(MAX(panel_size) OVER () - MIN(panel_size) OVER (), 0) AS norm_panel
+    FROM hcp_scores
+),
+hcp_weighted AS (
+    SELECT *,
+        (norm_baseline * 0.3 + norm_access * 0.3 + norm_competitor * 0.2 + norm_panel * 0.2) AS composite_score
+    FROM hcp_normalized
 ),
 hcp_tiered AS (
-    SELECT *,
-        NTILE(3) OVER (ORDER BY composite_score DESC) AS tier_raw
-    FROM hcp_scores
+    SELECT *, NTILE(3) OVER (ORDER BY composite_score DESC) AS tier_raw
+    FROM hcp_weighted
 )
 SELECT
-    hcp_id,
-    specialty,
-    state,
-    territory,
-    rep_id,
-    baseline_rx_monthly,
-    rep_access_score,
-    competitor_share,
-    panel_size,
-    avg_lift,
-    ROUND(composite_score, 2) AS composite_score,
-    CASE tier_raw
-        WHEN 1 THEN 'A'
-        WHEN 2 THEN 'B'
-        WHEN 3 THEN 'C'
-    END AS hcp_tier
+    hcp_id, specialty, state, territory, rep_id,
+    baseline_rx_monthly, rep_access_score, competitor_share, panel_size, avg_lift,
+    ROUND(composite_score, 4) AS composite_score,
+    CASE tier_raw WHEN 1 THEN 'A' WHEN 2 THEN 'B' WHEN 3 THEN 'C' END AS hcp_tier
 FROM hcp_tiered
 ORDER BY composite_score DESC;
 

@@ -31,7 +31,7 @@ A pharmaceutical company runs a multi-channel marketing campaign targeting ~25,0
 
 **Source:** Synthetic HCP Omnichannel Marketing Dataset (Kaggle - danielmeiser)
 **Size:** 150,000 rows × 42 columns
-**Structure:** Panel data - one row per HCP per week (24,935 unique doctors × 26 weeks)
+**Structure:** Panel data - 150,000 HCP-week observations covering 24,935 unique doctors over a 26-week window (unbalanced panel, ~6 weeks per doctor on average)
 
 **Key column groups:**
 
@@ -54,7 +54,6 @@ Pharma-Commercial-Analytics/
 │   ├── 02_Rep_Performance.png
 │   └── 03_Marketing_Mix_And_Territory_ROI.png
 │
-├── 01_create_table.sql               # MySQL table schema
 ├── 02_create_views.sql               # 5 analytical SQL views
 ├── addSQL.py                         # Loads CSV into MySQL
 ├── Pharma_Commercial_Analytics.pbix  # Power BI dashboard file
@@ -71,13 +70,15 @@ Five views built on top of the `hcp_marketing` table:
 Tiers all 24,935 doctors into A/B/C using a composite score:
 
 ```
-Composite Score = (baseline_rx_monthly × 0.3)
-                + (rep_access_score   × 100 × 0.3)
-                + (competitor_share   × 100 × 0.2)
-                + (panel_size         × 0.01 × 0.2)
+Composite Score = (norm(baseline_rx_monthly) × 0.3)
+                + (norm(rep_access_score)    × 0.3)
+                + (norm(competitor_share)    × 0.2)
+                + (norm(panel_size)          × 0.2)
+
+where norm(x) = (x − MIN(x)) / (MAX(x) − MIN(x))
 ```
 
-Uses `NTILE(3)` window function to split into equal thirds. Tier A = highest composite score = highest priority target.
+Each input is min-max normalized to a 0–1 scale before weighting, so the 0.3/0.3/0.2/0.2 weights reflect each variable's true contribution to the score rather than being distorted by differences in raw scale (e.g. `panel_size` ranging into the thousands vs. `rep_access_score` bounded at 0–1). Uses `NTILE(3)` window function to split into equal thirds. Tier A = highest composite score = highest priority target.
 
 ### 2. `vw_quota_attainment` - Rep Performance
 Computes `AVG(rx_lift_weekly) / AVG(weekly_quota_rx_lift) × 100` per rep per territory. Labels reps as **On Track** (≥100%), **At Risk** (80–99%), or **Underperforming** (<80%) using `CASE WHEN`.
@@ -106,7 +107,7 @@ Ranks all 5 territories by total Rx lift generated using the `RANK()` window fun
 
 - **Clustered bar chart** - competitor share and avg Rx lift by HCP tier (A/B/C), showing Tier A carries the highest competitor penetration - the primary targeting rationale
 - **Filled map** - average competitor share by US state using a blue gradient; darker = stronger competitor presence = higher market opportunity
-- **KPI cards** - Total HCPs (25K), Avg Competitor Share (0.29), Avg Composite Score (30.55)
+- **KPI cards** - Total HCPs (25K), Avg Competitor Share (0.29), Avg Composite Score (0.35)
 - **Slicers** - Filter by territory and specialty; cross-filter all visuals simultaneously
 
 ---
@@ -142,6 +143,7 @@ Ranks all 5 territories by total Rx lift generated using the `RANK()` window fun
 - **4 of 19 reps are Underperforming** (below 80% quota attainment), concentrated in the Northeast and Southeast territories
 - **Midwest/Ohio area shows highest competitor penetration** on the geographic map - the strongest opportunity for market share recovery
 - **Tier A doctors carry higher competitor share** (0.33 avg) than Tier C (0.23 avg), confirming that the targeting model correctly prioritises competitor-dominated HCPs - not just high prescribers
+- **Tiering separates HCPs cleanly on competitor share (the intended targeting signal) but does not differentiate on realized Rx lift** - consistent with the model prioritising opportunity over historical response
 
 ---
 
@@ -155,7 +157,6 @@ python addSQL.py
 
 **2. Create analytical views:**
 ```sql
-source 01_create_table.sql
 source 02_create_views.sql
 ```
 
